@@ -138,14 +138,19 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
     gradients[variable.unique_id] = deriv
 
     for var in sort:
+        # For intermediate nodes, we use chain-rule to backpropagate them
         if var.is_leaf() is False:
             for variable, gradient in var.chain_rule(gradients[var.unique_id]):
+                # skip constant nodes:
+                if variable.is_constant():
+                    continue
+
                 if variable.unique_id in gradients:
                     gradients[variable.unique_id] += gradient
                 else:
                     gradients[variable.unique_id] = gradient
-        
-        if var.is_leaf():
+        # For leaf nodes, we accumulate them directly
+        else:
             var.accumulate_derivative(gradients[var.unique_id])
 
 
