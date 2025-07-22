@@ -133,11 +133,20 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
 
     No return. Should write to its results to the derivative values of each leaf through `accumulate_derivative`.
     """
-    # BEGIN ASSIGN1_1
-    # TODO
-   
-    raise NotImplementedError("Task Autodiff Not Implemented Yet")
-    # END ASSIGN1_1
+    sort = topological_sort(variable)
+    gradients = {}
+    gradients[variable.unique_id] = deriv
+
+    for var in sort:
+        if var.is_leaf() is False:
+            for variable, gradient in var.chain_rule(gradients[var.unique_id]):
+                if variable.unique_id in gradients:
+                    gradients[variable.unique_id] += gradient
+                else:
+                    gradients[variable.unique_id] = gradient
+        
+        if var.is_leaf():
+            var.accumulate_derivative(gradients[var.unique_id])
 
 
 @dataclass
