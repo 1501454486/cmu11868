@@ -476,7 +476,43 @@ __global__ void MatrixMultiplyKernel(
     // 6. Synchronize to make sure all threads are done computing the output tile for (row, col)
     // 7. Write the output to global memory
 
-    assert(false && "Not Implemented");
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int row = blockIdx.y * TILE + threadIdx.y;
+    int col = blockIdx.x * TILE + threadIdx.x;
+
+    float c = 0;
+
+    for (int ph = 0; ph < a_shape[2]; ph += TILE) {
+      // move data from VRAM to shared memory
+      // load a
+      if (row < a_shape[1] && (ph + tx) < a_shape[2]) {
+        int a_index[] = {batch, row, ph + tx};
+        a_shared[ty][tx] = a_storage[index_to_position(a_index, a_strides, 3)];
+      } else {
+        a_shared[ty][tx] = 0.0;
+      }
+
+      // load b
+      if ((ph + ty) < b_shape[1] && col < b_shape[2]) {
+        int b_index[] = {batch, ph + ty, col};
+        b_shared[ty][tx] = b_storage[index_to_position(b_index, b_strides, 3)];
+      } else {
+        b_shared[ty][tx] = 0.0;
+      }
+      __syncthreads();
+      
+      for (int j = 0; j < TILE; ++j) {
+        c += a_shared[ty][j] * b_shared[j][tx];
+      }
+      __syncthreads();
+    }
+
+    if (row < out_shape[1] && col < out_shape[2]) {
+      int out_index[] = {batch, row, col};
+      out[index_to_position(out_index, out_strides, 3)] = c;
+    }
     /// END ASSIGN2_4
 }
 
@@ -523,7 +559,7 @@ void MatrixMultiply(
 
     int threadsPerBlock = 32;
     dim3 blockDims(threadsPerBlock, threadsPerBlock, 1); // Adjust these values based on your specific requirements
-    dim3 gridDims((m + threadsPerBlock - 1) / threadsPerBlock, (p + threadsPerBlock - 1) / threadsPerBlock, batch);
+    dim3 gridDims((p + threadsPerBlock - 1) / threadsPerBlock, (m + threadsPerBlock - 1) / threadsPerBlock, batch);
     MatrixMultiplyKernel<<<gridDims, blockDims>>>(
         d_out, d_out_shape, d_out_strides, d_a, d_a_shape, d_a_strides, d_b, d_b_shape, d_b_strides
     );

@@ -264,7 +264,20 @@ class CudaKernelOps(TensorOps):
         # TODO
         # 1. Call the Matmul function implemented in CUDA
 
-        raise NotImplementedError("Matrix Multiply Function Not Implemented Yet")
+        lib.MatrixMultiply(
+            out._tensor._storage,
+            out._tensor._shape.astype(np.int32),
+            out._tensor._strides.astype(np.int32),
+            a._tensor._storage,
+            a._tensor._shape.astype(np.int32),
+            a._tensor._strides.astype(np.int32),
+            b._tensor._storage,
+            b._tensor._shape.astype(np.int32),
+            b._tensor._strides.astype(np.int32),
+            a.shape[0],
+            a.shape[1],
+            b.shape[2]
+        )
         # END ASSIGN2_4
         
         # Undo 3d if we added it.
