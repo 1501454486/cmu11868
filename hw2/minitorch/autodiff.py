@@ -100,11 +100,26 @@ def topological_sort(variable: Variable) -> Iterable[Variable]:
     Returns:
         Non-constant Variables in topological order starting from the right.
     """
-    # BEGIN ASSIGN1_1
-    # TODO
+    order = []
+    visited = set()
+
+    def visit(var: Variable):
+        # if it's a constant variable or it has been visited, return directly
+        if var.is_constant() or var.unique_id in visited:
+            return
+
+        visited.add(var.unique_id)
+
+        # only non-leaf node has parents to be visited
+        if var.is_leaf() is False:
+            for parent in var.parents:
+                visit(parent)
+
+        # append this node after visiting all of its parents
+        order.append(var)
     
-    raise NotImplementedError("Task Autodiff Not Implemented Yet")
-    # END ASSIGN1_1
+    visit(variable)
+    return order[::-1]
 
 
 def backpropagate(variable: Variable, deriv: Any) -> None:
@@ -118,11 +133,25 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
 
     No return. Should write to its results to the derivative values of each leaf through `accumulate_derivative`.
     """
-    # BEGIN ASSIGN1_1
-    # TODO
-   
-    raise NotImplementedError("Task Autodiff Not Implemented Yet")
-    # END ASSIGN1_1
+    sort = topological_sort(variable)
+    gradients = {}
+    gradients[variable.unique_id] = deriv
+
+    for var in sort:
+        # For intermediate nodes, we use chain-rule to backpropagate them
+        if var.is_leaf() is False:
+            for variable, gradient in var.chain_rule(gradients[var.unique_id]):
+                # skip constant nodes:
+                if variable.is_constant():
+                    continue
+
+                if variable.unique_id in gradients:
+                    gradients[variable.unique_id] += gradient
+                else:
+                    gradients[variable.unique_id] = gradient
+        # For leaf nodes, we accumulate them directly
+        else:
+            var.accumulate_derivative(gradients[var.unique_id])
 
 
 @dataclass
