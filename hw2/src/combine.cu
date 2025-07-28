@@ -232,7 +232,20 @@ __global__ void mapKernel(
     // 5. Calculate the position of element in out_array according to out_index and out_strides
     // 6. Apply the unary function to the input element and write the output to the out memory
     
-    assert(false && "Not Implemented");
+    // position:在一维物理内存中的位置
+    // index:在多维逻辑视图中的坐标
+    // position in the output array that this thread will write to
+    int position = blockIdx.x * blockDim.x + threadIdx.x;
+    int in_position;
+    int out_position;
+    if (position < out_size) {
+      // convert the position to out_index
+      to_index(position, out_shape, out_index, shape_size);
+      broadcast_index(out_index, out_shape, in_shape, in_index, shape_size, shape_size);
+      in_position = index_to_position(in_index, in_strides, shape_size);
+      out_position = index_to_position(out_index, out_strides, shape_size);
+      out[out_position] = fn(fn_id, in_storage[in_position]);
+    }
     /// END ASSIGN2_1
 }
 
