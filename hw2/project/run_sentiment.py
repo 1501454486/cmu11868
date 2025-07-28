@@ -9,8 +9,11 @@ import minitorch
 
 from datasets import load_dataset
 
-from minitorch import SimpleOps
-BACKEND = minitorch.TensorBackend(SimpleOps)
+backend_name = "CudaKernelOps"
+
+if backend_name == "CudaKernelOps":
+    from minitorch.cuda_kernel_ops import CudaKernelOps
+    BACKEND = minitorch.TensorBackend(CudaKernelOps)
 
 BATCH = 10
 
