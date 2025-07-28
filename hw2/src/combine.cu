@@ -372,7 +372,7 @@ __global__ void reduceKernel(
    *  None (Fills in out array)
    */
 
-    // __shared__ double cache[BLOCK_DIM]; // Uncomment this line if you want to use shared memory to store partial results
+    extern __shared__ float cache[]; // Uncomment this line if you want to use shared memory to store partial results
     int out_index[MAX_DIMS];
 
     /// BEGIN ASSIGN2_3
@@ -383,23 +383,37 @@ __global__ void reduceKernel(
     // 4. Iterate over the reduce_dim dimension of the input array to compute the reduced value
     // 5. Write the reduced value to out memory
     
-    int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    float output = reduce_value;
-    int out_pos;
+    // --- SETUP ---
+    int tid = threadIdx.x;    // id of thread
+    int block_idx = blockIdx.x;                         // index of block
+    int block_size = blockDim.x;                        // number of threads per block
 
-    if (thread_idx < out_size) {
-      to_index(thread_idx, out_shape, out_index, shape_size);
-      int a_index[MAX_DIMS];
-      for (int j = 0; j < shape_size; ++j) {
-        a_index[j] = out_index[j];
+    // --- LOAD and PARTIAL REDUCTION
+    if (block_idx < out_size) {
+      to_index(block_idx, out_shape, out_index, shape_size);
+
+      int a_start_pos = index_to_position(out_index, a_strides, shape_size);
+      int reduce_stride = a_strides[reduce_dim];
+      int reduce_len = a_shape[reduce_dim];
+
+      float temp_result = reduce_value;
+      for (int i = tid; i < reduce_len; i += block_size) {
+        temp_result = fn(fn_id, temp_result, a_storage[a_start_pos + i * reduce_stride]);
       }
-      out_pos = index_to_position(out_index, out_strides, shape_size);
-      for (int i = 0; i < a_shape[reduce_dim]; ++i) {
-        a_index[reduce_dim] = i;
-        int a_pos = index_to_position(a_index, a_strides, shape_size);
-        output = fn(fn_id, output, a_storage[a_pos]);
+      cache[tid] = temp_result;
+
+      __syncthreads();
+      
+      for (int s = block_size / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+          cache[tid] = fn(fn_id, cache[tid], cache[tid + s]);
+        }
+        __syncthreads();
       }
-      out[out_pos] = output;
+
+      if (tid == 0) {
+        out[block_idx] = cache[0];
+      }
     }
     /// END ASSIGN2_3
 }
@@ -707,8 +721,9 @@ void tensorReduce(
     
     // Launch kernel
     int threadsPerBlock = 32;
-    int blocksPerGrid = (out_size + threadsPerBlock - 1) / threadsPerBlock;
-    reduceKernel<<<blocksPerGrid, threadsPerBlock>>>(
+    int blocksPerGrid = out_size;
+    size_t sharedMemSize = threadsPerBlock * sizeof(float);
+    reduceKernel<<<blocksPerGrid, threadsPerBlock, sharedMemSize>>>(
         d_out, d_out_shape, d_out_strides, out_size, 
         d_a, d_a_shape, d_a_strides, 
         reduce_dim, reduce_value, shape_size, fn_id
