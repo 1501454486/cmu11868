@@ -91,7 +91,10 @@ class Linear(Module):
         """
         self.out_size = out_size
         ### BEGIN ASSIGN3_2
-        raise NotImplementedError
+        self.use_bias = bias
+        self.weights = Parameter((rand((in_size, out_size), backend = backend) - 0.5) * 2 / np.sqrt(in_size))
+        if bias is True:
+            self.bias = Parameter((rand((out_size, ), backend = backend) - 0.5) * 2 / np.sqrt(in_size))
         ### END ASSIGN3_2
 
     def forward(self, x: Tensor):
@@ -105,7 +108,10 @@ class Linear(Module):
         """
         batch, in_size = x.shape
         ### BEGIN ASSIGN3_2
-        raise NotImplementedError
+        output = x @ self.weights.value
+        if self.use_bias:
+            output = output + self.bias.value
+        return output
         ### END ASSIGN3_2
 
 
@@ -143,3 +149,11 @@ class LayerNorm1d(Module):
         ### BEGIN ASSIGN3_2
         raise NotImplementedError
         ### END ASSIGN3_2
+
+
+def initialize(in_size, out_size, backend):
+    """
+    Initialization helper function for parameters
+    """
+    r = (rand((in_size, out_size), backend = backend) - 0.5) * 2 * np.sqrt(in_size)
+    return Parameter(r)
