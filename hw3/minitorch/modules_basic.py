@@ -115,12 +115,15 @@ class Linear(Module):
         Returns:
             output : Tensor of shape (n, out_size)
         """
-        batch, in_size = x.shape
+        leading_dims = x.shape[:-1]
+        in_size = x.shape[-1]
+        flattened_dim = np.prod(leading_dims).item()
         ### BEGIN ASSIGN3_2
-        output = x @ self.weights.value
+        x_reshaped = x.view(flattened_dim, in_size)
+        output = x_reshaped @ self.weights.value
         if self.use_bias:
             output = output + self.bias.value
-        return output
+        return output.view(*leading_dims, self.out_size)
         ### END ASSIGN3_2
 
 
