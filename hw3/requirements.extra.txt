@@ -1,0 +1,7 @@
+torch
+datasets
+tokenizers
+transformers
+fire
+sacrebleu
+wrapt
