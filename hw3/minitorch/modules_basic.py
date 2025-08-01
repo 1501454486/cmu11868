@@ -33,7 +33,7 @@ class Embedding(Module):
         self.num_embeddings = num_embeddings # Vocab size
         self.embedding_dim  = embedding_dim  # Embedding Dimension
         ### BEGIN ASSIGN3_2
-        raise NotImplementedError
+        self.weights = Parameter((rand((num_embeddings, embedding_dim), backend = backend) - 0.5) * 2)
         ### END ASSIGN3_2
     
     def forward(self, x: Tensor):
@@ -47,7 +47,11 @@ class Embedding(Module):
         """
         bs, seq_len = x.shape
         ### BEGIN ASSIGN3_2
-        raise NotImplementedError
+        # shape of one_hot_vector: (batch_size, seq_len, num_embeddings)
+        one_hot_vector = one_hot(input = x, num_classes = self.num_embeddings)
+        # NOTE that, this framework won't automatically deal with batch size!
+        embedded = one_hot_vector.view(bs * seq_len, self.num_embeddings) @ self.weights.value
+        return embedded.view(bs, seq_len, self.embedding_dim)
         ### END ASSIGN3_2
 
     
@@ -154,11 +158,3 @@ class LayerNorm1d(Module):
         ### BEGIN ASSIGN3_2
         raise NotImplementedError
         ### END ASSIGN3_2
-
-
-def initialize(in_size, out_size, backend):
-    """
-    Initialization helper function for parameters
-    """
-    r = (rand((in_size, out_size), backend = backend) - 0.5) * 2 * np.sqrt(in_size)
-    return Parameter(r)
