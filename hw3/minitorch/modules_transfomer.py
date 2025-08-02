@@ -45,12 +45,11 @@ class MultiHeadAttention(Module):
         self.attn_hidden_dim = n_embd // n_head
 
         ### BEGIN ASSIGN3_3
-        raise NotImplementedError
-        # self.q_projection = 
-        # self.k_projection = 
-        # self.v_projection = 
-        # self.out_projection = 
-        # self.dropout = 
+        self.q_projection = Linear(n_embd, n_embd, bias = bias, backend = backend)
+        self.k_projection = Linear(n_embd, n_embd, bias = bias, backend = backend)
+        self.v_projection = Linear(n_embd, n_embd, bias = bias, backend = backend)
+        self.out_projection = Linear(n_embd, n_embd, bias = bias, backend = backend)
+        self.dropout = Dropout(p_dropout = p_dropout)
         ### END ASSIGN3_3
 
     def create_causal_mask(self, seq_len):
@@ -87,7 +86,29 @@ class MultiHeadAttention(Module):
         """
         batch_size, seq_len, n_embd = x.shape
         ### BEGIN ASSIGN3_3
-        raise NotImplementedError
+        # def project_and_split_heads(projection_layer, tensor_in):
+        #     # 1. projection: (bs, T, n_embd) -> (bs, T, embd)
+        #     projected = projection_layer(tensor_in)
+        #     # 2. transform and split to n_heads: (bs, T, n_heads, attn_hidden_dim)
+        #     view_split = projected.view(batch_size, seq_len, self.n_head, self.attn_hidden_dim)
+        #     # 3. permute
+        #     permuted = view_split.permute(0, 2, 1, 3)
+        #     return permuted
+        # q = project_and_split_heads(self.q_projection, x)
+        # kT = project_and_split_heads(self.k_projection, x).permute(0, 1, 3, 2).contiguous()
+        # v = project_and_split_heads(self.v_projection, x)
+        
+        def proj(layer):
+            # (bs, seq_len, n_head) -> (bs, n_head, seq_len, d)
+            y = layer(x).view(batch_size, seq_len, self.n_head, self.attn_hidden_dim)
+            return y.permute(0, 2, 1, 3).contiguous()
+        
+        q = proj(self.q_projection)
+        k = proj(self.k_projection)
+        v = proj(self.v_projection)
+        
+        kT = k.permute(0, 1, 3, 2).contiguous()
+        
         ### END ASSIGN3_3
         return q, kT, v
     
@@ -110,7 +131,23 @@ class MultiHeadAttention(Module):
         result = None
         
         ### BEGIN ASSIGN3_3
-        raise NotImplementedError
+        attn_scores = q @ kT / (self.attn_hidden_dim ** 0.5)
+        if self.causal:
+            # if need mask
+            mask = self.create_causal_mask(queries_len)
+            attn_scores = attn_scores + mask
+            
+        attn_weights = softmax(attn_scores, dim = 3)
+        
+        attn_weights = self.dropout(attn_weights)
+        
+        # (bs, h, T, T) @ (bs, h, T, d_v) -> (bs, h, T, d_v)
+        attention_output = attn_weights @ v
+        
+        # concatenate: permute and concatenate
+        permuted = attention_output.permute(0, 2, 1, 3).contiguous()
+        result = permuted.view(batch_size, queries_len, self.n_embd)
+            
         ### END ASSIGN3_3
 
         return result
@@ -127,7 +164,10 @@ class MultiHeadAttention(Module):
         """
         batch_size, seq_len, n_embd = x.shape
         ### BEGIN ASSIGN3_3
-        raise NotImplementedError
+        q, kT, v = self.project_to_query_key_value(x)
+        output = self.self_attention(q, kT, v)
+        output = self.out_projection(output)
+        return output
         ### END ASSIGN3_3
 
 
