@@ -1,3 +1,5 @@
+from re import S
+from tkinter import N
 import numpy as np
 from .tensor import tensor, tensor_from_numpy
 from .module import Module, Parameter
@@ -238,11 +240,10 @@ class TransformerLayer(Module):
             ff (FeedForward): Feed-forward network layer
         """
         ### BEGIN ASSIGN3_3
-        raise NotImplementedError
-        # self.ln_1 = 
-        # self.ln_2 = 
-        # self.attention = 
-        # self.ff = 
+        self.ln_1 = LayerNorm1d(n_embd, eps = ln_eps, backend = backend)
+        self.ln_2 = LayerNorm1d(n_embd, eps = ln_eps, backend = backend)
+        self.attention = MultiHeadAttention(n_embd, n_head, p_dropout = p_dropout, bias = bias, backend = backend)
+        self.ff = FeedForward(n_embd, p_dropout = p_dropout, bias = bias, backend = backend)
         ### END ASSIGN3_3
 
     def forward(self, x):
@@ -257,7 +258,14 @@ class TransformerLayer(Module):
         """
         batch_size, seq_len, n_embd = x.shape
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError
+        output = self.ln_1.forward(x.view(batch_size * seq_len, n_embd)).view(batch_size, seq_len, n_embd)
+        output = self.attention.forward(output)
+        x = x + output
+        output = self.ln_2.forward(x.view(batch_size * seq_len, n_embd)).view(batch_size, seq_len, n_embd)
+        output = self.ff.forward(output)
+        x = x + output
+        return x
+        
         ### END YOUR SOLUTION
 
 
