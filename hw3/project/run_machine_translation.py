@@ -14,6 +14,208 @@ from tokenizers import ByteLevelBPETokenizer
 import minitorch
 from minitorch import DecoderLM
 from minitorch.cuda_kernel_ops import CudaKernelOps
+import pickle
+
+
+def get_model_parameters(module, prefix=''):
+    """
+    Recursively collect all parameters from a module and its submodules.
+    
+    Args:
+        module: The module to collect parameters from
+        prefix: Prefix for parameter names
+    
+    Returns:
+        dict: Dictionary mapping parameter names to Parameter objects
+    """
+    parameters = {}
+    
+    # Get direct parameters
+    if hasattr(module, '_parameters'):
+        for name, param in module._parameters.items():
+            full_name = f"{prefix}.{name}" if prefix else name
+            parameters[full_name] = param
+    
+    # Get parameters from submodules
+    if hasattr(module, '_modules'):
+        for name, submodule in module._modules.items():
+            sub_prefix = f"{prefix}.{name}" if prefix else name
+            sub_params = get_model_parameters(submodule, sub_prefix)
+            parameters.update(sub_params)
+    
+    return parameters
+
+
+def save_checkpoint(model, optimizer, epoch, validation_loss, bleu_score, workdir, is_best=False):
+    """
+    Save model checkpoint with training state.
+    
+    Args:
+        model (DecoderLM): Model to save
+        optimizer (Adam): Optimizer to save
+        epoch (int): Current epoch number
+        validation_loss (float): Current validation loss
+        bleu_score (float): Current BLEU score
+        workdir (str): Directory to save checkpoint
+        is_best (bool): Whether this is the best model so far
+    """
+    # Save model parameters using our custom function
+    model_state = {}
+    model_params = get_model_parameters(model)
+    for name, param in model_params.items():
+        if param.value is not None:
+            model_state[name] = param.value.to_numpy()  # Convert tensor to numpy for serialization
+    
+    # Save optimizer state
+    optimizer_state = {
+        'lr': optimizer.lr,
+        'beta1': optimizer.beta1, 
+        'beta2': optimizer.beta2,
+        'eps': optimizer.eps,
+        'states': {}
+    }
+    
+    # Save Adam states - need to map parameter names to states
+    param_id_to_name = {}
+    model_params = get_model_parameters(model)
+    for name, param in model_params.items():
+        param_id_to_name[id(param)] = name
+    
+    for param_id, state in optimizer._states.items():
+        if param_id in param_id_to_name:
+            param_name = param_id_to_name[param_id]
+            # Convert tensors to numpy arrays for serialization
+            saved_state = {}
+            for key, value in state.items():
+                if hasattr(value, 'to_numpy'):
+                    saved_state[key] = value.to_numpy()
+                else:
+                    saved_state[key] = value
+            optimizer_state['states'][param_name] = saved_state
+    
+    checkpoint = {
+        'epoch': epoch,
+        'model_state': model_state,
+        'optimizer_state': optimizer_state,
+        'validation_loss': validation_loss,
+        'bleu_score': bleu_score,
+        'timestamp': time.time()
+    }
+    
+    # Save regular checkpoint
+    checkpoint_path = os.path.join(workdir, f'checkpoint_epoch_{epoch}.pkl')
+    with open(checkpoint_path, 'wb') as f:
+        pickle.dump(checkpoint, f)
+    
+    # Save latest checkpoint
+    latest_path = os.path.join(workdir, 'checkpoint_latest.pkl')
+    with open(latest_path, 'wb') as f:
+        pickle.dump(checkpoint, f)
+    
+    # Save best checkpoint if this is the best model
+    if is_best:
+        best_path = os.path.join(workdir, 'checkpoint_best.pkl')
+        with open(best_path, 'wb') as f:
+            pickle.dump(checkpoint, f)
+    
+    print(f"Checkpoint saved: {checkpoint_path}")
+    if is_best:
+        print(f"Best checkpoint saved: {best_path}")
+
+
+def load_checkpoint(checkpoint_path, model, optimizer):
+    """
+    Load model checkpoint and restore training state.
+    
+    Args:
+        checkpoint_path (str): Path to checkpoint file
+        model (DecoderLM): Model to load state into
+        optimizer (Adam): Optimizer to load state into
+        
+    Returns:
+        dict: Checkpoint data containing epoch, losses, etc.
+    """
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    
+    with open(checkpoint_path, 'rb') as f:
+        checkpoint = pickle.load(f)
+    
+    # Restore model parameters
+    model_state = checkpoint['model_state']
+    model_params = get_model_parameters(model)
+    param_dict = {name: param for name, param in model_params.items()}
+    
+    for param_name, numpy_value in model_state.items():
+        if param_name in param_dict:
+            param = param_dict[param_name]
+            # Convert numpy back to tensor with same backend
+            restored_tensor = minitorch.tensor_from_numpy(numpy_value, backend=param.value.backend, requires_grad=True)
+            param.update(restored_tensor)
+    
+    # Restore optimizer state
+    optimizer_state = checkpoint['optimizer_state']
+    optimizer.lr = optimizer_state['lr']
+    optimizer.beta1 = optimizer_state['beta1']
+    optimizer.beta2 = optimizer_state['beta2']
+    optimizer.eps = optimizer_state['eps']
+    
+    # Restore Adam states - map parameter names back to IDs
+    optimizer._states = {}
+    model_params = get_model_parameters(model)
+    name_to_param = {name: param for name, param in model_params.items()}
+    
+    for param_name, saved_state in optimizer_state['states'].items():
+        if param_name in name_to_param:
+            param = name_to_param[param_name]
+            param_id = id(param)
+            
+            # Restore state tensors
+            restored_state = {}
+            for key, value in saved_state.items():
+                if key in ['exp_avg', 'exp_avg_sq']:
+                    # Convert numpy back to tensor
+                    restored_state[key] = minitorch.tensor_from_numpy(
+                        value, backend=param.value.backend, requires_grad=False
+                    )
+                else:
+                    # Keep scalar values as-is (like 'step')
+                    restored_state[key] = value
+            
+            optimizer._states[param_id] = restored_state
+    
+    print(f"Checkpoint loaded: {checkpoint_path}")
+    print(f"Resuming from epoch {checkpoint['epoch']}")
+    print(f"Previous validation loss: {checkpoint['validation_loss']:.4f}")
+    print(f"Previous BLEU score: {checkpoint['bleu_score']:.2f}")
+    
+    return checkpoint
+
+
+def cleanup_checkpoints(workdir, keep_last_n=3):
+    """
+    Clean up old checkpoint files, keeping only the most recent ones.
+    
+    Args:
+        workdir (str): Directory containing checkpoints
+        keep_last_n (int): Number of recent checkpoints to keep
+    """
+    checkpoint_files = []
+    
+    for filename in os.listdir(workdir):
+        if filename.startswith('checkpoint_epoch_') and filename.endswith('.pkl'):
+            epoch_num = int(filename.split('_')[2].split('.')[0])
+            checkpoint_files.append((epoch_num, filename))
+    
+    # Sort by epoch number and remove old ones
+    checkpoint_files.sort(key=lambda x: x[0])
+    
+    if len(checkpoint_files) > keep_last_n:
+        files_to_remove = checkpoint_files[:-keep_last_n]
+        for epoch_num, filename in files_to_remove:
+            filepath = os.path.join(workdir, filename)
+            os.remove(filepath)
+            print(f"Removed old checkpoint: {filename}")
 
 
 def get_dataset(dataset_name, model_max_length):
@@ -305,7 +507,17 @@ def generate(
             # run the model with current token_ids, and predict the next token (gen_id)
             # hint: obtain the logits of next token, and take the argmax.
             gen_id = 0
-            raise NotImplementedError("Generation Function Not Implemented Yet")
+            
+            input_tensor = minitorch.tensor([token_ids], backend = backend)
+            logits = model.forward(input_tensor)
+            
+            logits_np = logits.to_numpy()
+            
+            # Shape: (vocab_size, )
+            last_token_logits_np = logits_np[0, -1, :]
+            
+            gen_id = np.argmax(last_token_logits_np)
+            
             # END ASSIGN3_4
 
             if gen_id == tokenizer.vocab[f'<eos_{tgt_key}>']:
@@ -346,7 +558,9 @@ def main(
     samples_per_epoch=20000,
     n_vocab=10000,
     n_embd=256,
-    seed=11111
+    seed=11111,
+    resume=True,
+    checkpoint_path="/home/lixinyuan/cmu11868hw/hw3/workdir_vocab10000_lr0.02_embd256/checkpoint_latest.pkl"
 ):
     """
     Train and evaluate a decoder-only transformer language model.
@@ -361,6 +575,8 @@ def main(
         n_vocab (int): Vocabulary size for tokenizer, default 10000
         n_embd (int): Embedding dimension, default 256
         seed (int): Random seed, default 11111
+        resume (bool): Whether to resume training from checkpoint, default False
+        checkpoint_path (str): Specific checkpoint path to load, default None (loads latest)
     """
 
     np.random.seed(seed)
@@ -384,6 +600,33 @@ def main(
 
     model = DecoderLM(**config)
     optimizer = minitorch.Adam(model.parameters(), lr=learning_rate)
+    
+    # Initialize training state
+    start_epoch = 0
+    best_validation_loss = float('inf')
+    best_bleu_score = 0.0
+    
+    # Handle resume functionality
+    if resume:
+        if checkpoint_path is None:
+            # Try to load latest checkpoint
+            latest_checkpoint = os.path.join(workdir, 'checkpoint_latest.pkl')
+            if os.path.exists(latest_checkpoint):
+                checkpoint_path = latest_checkpoint
+            else:
+                print("No checkpoint found to resume from. Starting from scratch.")
+        
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            try:
+                checkpoint_data = load_checkpoint(checkpoint_path, model, optimizer)
+                start_epoch = checkpoint_data['epoch'] + 1
+                best_validation_loss = checkpoint_data.get('validation_loss', float('inf'))
+                best_bleu_score = checkpoint_data.get('bleu_score', 0.0)
+                print(f"Successfully resumed training from epoch {start_epoch}")
+            except Exception as e:
+                print(f"Error loading checkpoint: {e}")
+                print("Starting from scratch.")
+                start_epoch = 0
 
     dataset, src_key, tgt_key = get_dataset(
         dataset_name=dataset_name, model_max_length=model_max_length)
@@ -403,7 +646,7 @@ def main(
         model_max_length=model_max_length,
         backend=backend)
 
-    for epoch_idx in range(n_epochs):
+    for epoch_idx in range(start_epoch, n_epochs):
         desc = f'epoch {epoch_idx} / {n_epochs}'
 
         train(
@@ -442,11 +685,39 @@ def main(
 
         eval_scores = evaluate_bleu(
             examples=dataset['test'], gen_sents=gen_sents, tgt_key=tgt_key)
+        current_bleu = eval_scores['bleu']
         print(f'Epoch {epoch_idx}: {eval_scores}')
 
         json.dump(
             {'validation_loss': float(validation_loss), **eval_scores},
             open(f'{workdir}/eval_results_epoch{epoch_idx}.json', 'w'))
+
+        # Determine if this is the best model
+        is_best_loss = validation_loss < best_validation_loss
+        is_best_bleu = current_bleu > best_bleu_score
+        is_best = is_best_loss or is_best_bleu
+        
+        # Update best scores
+        if is_best_loss:
+            best_validation_loss = validation_loss
+            print(f"New best validation loss: {validation_loss:.4f}")
+        if is_best_bleu:
+            best_bleu_score = current_bleu
+            print(f"New best BLEU score: {current_bleu:.2f}")
+
+        # Save checkpoint
+        save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            epoch=epoch_idx,
+            validation_loss=validation_loss,
+            bleu_score=current_bleu,
+            workdir=workdir,
+            is_best=is_best
+        )
+        
+        # Clean up old checkpoints (keep last 3)
+        cleanup_checkpoints(workdir, keep_last_n=3)
 
 
 if __name__ == '__main__':
