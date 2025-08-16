@@ -11,3 +11,12 @@ build/
 # Unit test / coverage reports
 .pytest_cache/
 .hypothesis/
+
+
+# checkpoints
+workdir*/
+
+
+CLAUDE.md
+
+data
