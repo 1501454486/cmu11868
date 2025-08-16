@@ -224,7 +224,27 @@ class SimpleOps(TensorOps):
 
     @staticmethod
     def matrix_multiply(a: "Tensor", b: "Tensor") -> "Tensor":
-        raise NotImplementedError("Not implemented in this assignment")
+        """
+        CPU (Simple) matrix multiply implementation using numpy.matmul.
+        Supports batched matrix multiply with broadcasting over leading dims.
+
+        a, b : minitorch.Tensor
+        We use Tensor.to_numpy() -> np.ndarray, perform np.matmul, then convert
+        result back to a minitorch Tensor using minitorch.tensor_from_numpy(...).
+        """
+        # Convert inputs to numpy arrays (Tensor.to_numpy ensures contiguous() behavior)
+        a_np = a.to_numpy()
+        b_np = b.to_numpy()
+
+        # Use numpy.matmul which supports broadcasting for batched matmul.
+        out_np = np.matmul(a_np, b_np)
+
+        # Convert back to a minitorch Tensor using the same backend as 'a'.
+        # Import minitorch lazily to avoid circular imports at module load time.
+        import minitorch
+
+        # Use tensor_from_numpy so the returned Tensor has the correct TensorData shapes/strides.
+        return minitorch.tensor_from_numpy(out_np, backend=a.backend)
 
     is_cuda = False
 

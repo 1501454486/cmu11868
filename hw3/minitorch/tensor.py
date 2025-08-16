@@ -338,8 +338,10 @@ class Tensor:
                 out = self.backend.add_reduce(out, dim)
         assert out.size == self.size, f"{out.shape} {self.shape}"
         # START CODE CHANGE (2021)
-        return Tensor.make(out._tensor._storage, self.shape, backend=self.backend)
+        # return Tensor.make(out._tensor._storage, self.shape, backend=self.backend)
         # END CODE CHANGE (2021)
+        out._type_(self.backend)
+        return out
 
     def zeros(self, shape: Optional[UserShape] = None) -> Tensor:
         def zero(shape: UserShape) -> Tensor:
@@ -372,11 +374,35 @@ class Tensor:
             x : value to be accumulated
         """
         assert self.is_leaf(), "Only leaf variables can have derivatives."
+
+        # If no gradient yet, create a zero leaf tensor (same backend & shape)
         if self.grad is None:
             self.grad = Tensor.make(
                 [0] * int(operators.prod(self.shape)), self.shape, backend=self.backend
             )
-        self.grad += x
+
+        # Perform in-place numeric accumulation into the storage array.
+        # This avoids creating new history nodes on self.grad (which would make .grad non-leaf)
+        # and keeps accumulation purely numeric (no graph).
+        # Both self.grad and x are Tensors; use their underlying storage arrays.
+        # They are stored flattened, so we can add directly.
+        # IMPORTANT: Ensure shapes/sizes match.
+        try:
+            # If x is a Tensor - use its flattened storage
+            self.grad._tensor._storage[:] += x._tensor._storage
+        except AttributeError:
+            # If x is a Python scalar or numpy array convertible:
+            # convert to numpy then add - but keep in-place on storage.
+            import numpy as _np
+
+            arr = _np.array(x, dtype=self.grad._tensor._storage.dtype).ravel()
+            if arr.size == 1:
+                self.grad._tensor._storage[:] += arr.item()
+            else:
+                # If shapes mismatch, try broadcasting if safe
+                self.grad._tensor._storage[:] += arr.astype(self.grad._tensor._storage.dtype).ravel()
+
+
 
     def is_leaf(self) -> bool:
         "True if this variable created by the user (no `last_fn`)"
