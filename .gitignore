@@ -20,3 +20,5 @@ workdir*/
 CLAUDE.md
 
 data
+
+cuda_kernels/
