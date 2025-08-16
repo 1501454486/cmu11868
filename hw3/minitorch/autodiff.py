@@ -134,7 +134,8 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
     No return. Should write to its results to the derivative values of each leaf through `accumulate_derivative`.
     """
     sort = topological_sort(variable)
-    gradients = {}
+    # NOTE!!!IMPORTANT!!!
+    gradients = {v.unique_id:0 for v in sort}
     gradients[variable.unique_id] = deriv
 
     for var in sort:

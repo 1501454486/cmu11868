@@ -15,6 +15,7 @@ from .nn import (
     dropout,
     GELU,
     logsumexp,
+    softmax
 )
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -129,9 +130,7 @@ class MultiHeadAttention(Module):
             attn_scores = attn_scores + mask
             
         # Manual softmax using logsumexp (to avoid broken softmax gradients)
-        # softmax(x, dim) = exp(x - logsumexp(x, dim))
-        log_sum_exp = logsumexp(attn_scores, dim=3)
-        attn_weights = (attn_scores - log_sum_exp).exp()
+        attn_weights = softmax(attn_scores, dim = 3)
         
         attn_weights = self.dropout(attn_weights)
         
