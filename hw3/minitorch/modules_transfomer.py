@@ -12,9 +12,9 @@ from .modules_basic import (
 from .tensor_ops import TensorBackend
 from .nn import (
     max,
-    softmax,
     dropout,
     GELU,
+    logsumexp,
 )
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -88,20 +88,8 @@ class MultiHeadAttention(Module):
         """
         batch_size, seq_len, n_embd = x.shape
         ### BEGIN ASSIGN3_3
-        # def project_and_split_heads(projection_layer, tensor_in):
-        #     # 1. projection: (bs, T, n_embd) -> (bs, T, embd)
-        #     projected = projection_layer(tensor_in)
-        #     # 2. transform and split to n_heads: (bs, T, n_heads, attn_hidden_dim)
-        #     view_split = projected.view(batch_size, seq_len, self.n_head, self.attn_hidden_dim)
-        #     # 3. permute
-        #     permuted = view_split.permute(0, 2, 1, 3)
-        #     return permuted
-        # q = project_and_split_heads(self.q_projection, x)
-        # kT = project_and_split_heads(self.k_projection, x).permute(0, 1, 3, 2).contiguous()
-        # v = project_and_split_heads(self.v_projection, x)
-        
         def proj(layer):
-            # (bs, seq_len, n_head) -> (bs, n_head, seq_len, d)
+            # (bs, seq_len, n_embd) -> (bs, n_head, seq_len, d)
             y = layer(x).view(batch_size, seq_len, self.n_head, self.attn_hidden_dim)
             return y.permute(0, 2, 1, 3).contiguous()
         
@@ -109,6 +97,7 @@ class MultiHeadAttention(Module):
         k = proj(self.k_projection)
         v = proj(self.v_projection)
         
+        # Don't transpose K here - return as kT for compatibility
         kT = k.permute(0, 1, 3, 2).contiguous()
         
         ### END ASSIGN3_3
@@ -127,7 +116,7 @@ class MultiHeadAttention(Module):
             Tensor: Attention output of shape (batch_size, seq_len, n_embd)
         """
         batch_size, num_head, queries_len, q_dim = q.shape
-        _, _, k_dim, _ = kT.shape
+        _, _, k_dim, _ = kT.shape  # kT is transposed
         _, _, _, v_dim = v.shape
         assert q_dim == k_dim == v_dim
         result = None
@@ -139,7 +128,10 @@ class MultiHeadAttention(Module):
             mask = self.create_causal_mask(queries_len)
             attn_scores = attn_scores + mask
             
-        attn_weights = softmax(attn_scores, dim = 3)
+        # Manual softmax using logsumexp (to avoid broken softmax gradients)
+        # softmax(x, dim) = exp(x - logsumexp(x, dim))
+        log_sum_exp = logsumexp(attn_scores, dim=3)
+        attn_weights = (attn_scores - log_sum_exp).exp()
         
         attn_weights = self.dropout(attn_weights)
         
@@ -169,6 +161,7 @@ class MultiHeadAttention(Module):
         q, kT, v = self.project_to_query_key_value(x)
         output = self.self_attention(q, kT, v)
         output = self.out_projection(output)
+        output = self.dropout(output)
         return output
         ### END ASSIGN3_3
 
@@ -310,16 +303,60 @@ class DecoderLM(Module):
         self.n_embd = n_embd
         self.n_vocab = n_vocab
         ### BEGIN ASSIGN3_3
-        raise NotImplementedError
-        # self.token_embeddings = 
-        # self.position_embeddings = 
-        # self.t_layer_1 = 
-        # self.t_layer_2 = 
-        # self.t_layer_3 = 
-        # self.t_layer_4 = 
-        # self.dropout = 
-        # self.ln = 
-        # self.lm_head = 
+        self.token_embeddings = Embedding(
+            num_embeddings = n_vocab,
+            embedding_dim = n_embd,
+            backend = backend
+        )
+        self.position_embeddings = Embedding(
+            num_embeddings = n_positions,
+            embedding_dim = n_embd,
+            backend = backend
+        )
+        self.t_layer_1 = TransformerLayer(
+            n_embd = n_embd,
+            n_head = n_head,
+            p_dropout = p_dropout,
+            ln_eps = ln_eps,
+            bias = bias,
+            backend = backend
+        )
+        self.t_layer_2 = TransformerLayer(
+            n_embd = n_embd,
+            n_head = n_head,
+            p_dropout = p_dropout,
+            ln_eps = ln_eps,
+            bias = bias,
+            backend = backend
+        )
+        self.t_layer_3 = TransformerLayer(
+            n_embd = n_embd,
+            n_head = n_head,
+            p_dropout = p_dropout,
+            ln_eps = ln_eps,
+            bias = bias,
+            backend = backend
+        )
+        self.t_layer_4 = TransformerLayer(
+            n_embd = n_embd,
+            n_head = n_head,
+            p_dropout = p_dropout,
+            ln_eps = ln_eps,
+            bias = bias,
+            backend = backend
+        )
+        self.dropout = Dropout(p_dropout = p_dropout)
+        self.ln = LayerNorm1d(
+            dim = n_embd,
+            eps = ln_eps,
+            backend = backend
+        )
+        self.lm_head = Linear(
+            in_size = n_embd,
+            out_size = n_vocab,
+            bias = bias,
+            backend = backend
+        )
         ### END ASSIGN3_3
     
     def forward(self, idx):
@@ -336,7 +373,6 @@ class DecoderLM(Module):
         batch_size, seq_len = idx.shape
 
         ### BEGIN ASSIGN3_3
-        raise NotImplementedError
         # 1. Get token embeddings of shape (batch_size, seq_len, n_embd)
         # 2. Create positional embeddings of shape (1, seq_len, n_embd):
         #    - Create position ids tensor [0, 1, 2, ..., seq_len-1] of shape (1, seq_len)
@@ -347,4 +383,25 @@ class DecoderLM(Module):
         # 5. Pass through transformer layers (t_layer_1 to t_layer_4)
         # 6. Apply final layer normalization
         # 7. Project to vocabulary size using lm_head
+
+        # Shape: (batch_size, seq_len, n_embd)
+        token_embeddings = self.token_embeddings.forward(idx)
+
+        # shape: (1, seq_len)
+        pos = tensor(list(range(seq_len)), backend = self.backend, requires_grad = True).view(1, seq_len)
+        pos_embeddings = self.position_embeddings.forward(pos)      # shape: (1, seq_len, n_embd)
+        
+        embeddings = token_embeddings + pos_embeddings
+        
+        output = self.dropout.forward(embeddings)
+        
+        output = self.t_layer_1.forward(output)
+        output = self.t_layer_2.forward(output)
+        output = self.t_layer_3.forward(output)
+        output = self.t_layer_4.forward(output)
+        
+        output = self.ln.forward(output.view(batch_size * seq_len, self.n_embd)).view(batch_size, seq_len, self.n_embd)
+        output = self.lm_head.forward(output)
+        
+        return output
         ### END ASSIGN3_3
