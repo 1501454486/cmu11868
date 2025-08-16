@@ -18,9 +18,16 @@ from .tensor_functions import tensor_from_numpy
 
 import ctypes
 import numpy as np
-import pycuda.autoinit
-import pycuda.driver as cuda
+# import pycuda.autoinit
+
+# 引入 PyTorch 并确保它先初始化
 import torch
+if torch.cuda.is_available():
+    # 这行代码会温和地确保PyTorch完成CUDA初始化，而不会像pycuda那样霸道
+    _ = torch.tensor([1.0]).cuda() 
+
+import pycuda.driver as cuda
+# import torch
 
 # Load the shared library
 lib = ctypes.CDLL("minitorch/cuda_kernels/combine.so")
