@@ -119,10 +119,12 @@ class Linear(Module):
         in_size = x.shape[-1]
         flattened_dim = np.prod(leading_dims).item()
         ### BEGIN ASSIGN3_2
+        x = x.contiguous()
         x_reshaped = x.view(flattened_dim, in_size)
         output = x_reshaped @ self.weights.value
         if self.use_bias:
             output = output + self.bias.value
+        output = output.contiguous()
         return output.view(*leading_dims, self.out_size)
         ### END ASSIGN3_2
 
