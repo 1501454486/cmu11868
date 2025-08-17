@@ -14,11 +14,11 @@ build/
 
 
 # checkpoints
-workdir*/
+# workdir*/
 
 
 CLAUDE.md
 
-data
+# data
 
 cuda_kernels/
