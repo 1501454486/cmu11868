@@ -554,7 +554,7 @@ def main(
     model_max_length=40,
     n_epochs=20,
     batch_size=128,
-    learning_rate=0.02,
+    learning_rate=0.01,
     samples_per_epoch=20000,
     n_vocab=10000,
     n_embd=256,
