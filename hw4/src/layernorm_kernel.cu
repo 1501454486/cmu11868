@@ -45,18 +45,57 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   // 3. Compute layernorm result with reinterpret_cast by casting to float4 for speedup
   
   // Step 1
-  float l_sum = 0;
+  float l_sum = 0;        // x
+  float l_sum_1 = 0;      // x^2
   const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
     float4 val = inp_f4[idx];
     l_sum += val.x + val.y + val.z + val.w;
+    l_sum_1 += val.x * val.x + val.y * val.y + val.z * val.z + val.w * val.w;
   }
 
   // Step 2
+  float thread_local_data[2];
+  thread_local_data[0] = l_sum;
+  thread_local_data[1] = l_sum_1;
+
+  blockReduce<ReduceType::kSum, 2>(thread_local_data);
+  __shared__ float final_mean, final_var;
+
+  if (threadIdx.x == 0) {
+    // Only threadIdx.x == 0 gets the final result
+    float block_total_sum = thread_local_data[0];
+    float block_total_sum_sq = thread_local_data[1];
+    
+    final_mean = block_total_sum / (4 * hidden_size);
+    final_var = block_total_sum_sq / (4 * hidden_size) - final_mean * final_mean;
+
+    means[blockIdx.x] = final_mean;
+    vars[blockIdx.x] = final_var;
+  }
+
+  __syncthreads();
+
+  float r_std = rsqrt(final_var);
 
   // Step 3
-  
-  assert(false && "Not Implemented");
+  float4 *ln_res_f4 = reinterpret_cast<float4 *>(ln_res) + blockIdx.x * hidden_size;
+  const float4 *scale_f4 = reinterpret_cast<const float4 *>(scale);
+  const float4 *bias_f4 = reinterpret_cast<const float4 *>(bias);
+  for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
+    float4 res;
+    float4 val = inp_f4[idx];
+    float4 scale_val = scale_f4[idx];
+    float4 bias_val = bias_f4[idx];
+
+    res.x = scale_val.x * (val.x - final_mean) * r_std + bias_val.x;
+    res.y = scale_val.y * (val.y - final_mean) * r_std + bias_val.y;
+    res.z = scale_val.z * (val.z - final_mean) * r_std + bias_val.z;
+    res.w = scale_val.w * (val.w - final_mean) * r_std + bias_val.w;\
+
+    ln_res_f4[idx] = res;
+  }
+
   /// END ASSIGN4_2_1
 }
 
