@@ -46,47 +46,81 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   
   // Step 1
   float l_sum = 0;        // x
-  float l_sum_1 = 0;      // x^2
-  const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
+  float l_sum_sq = 0;      // x^2
+  const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;
+  const float4 *scale_f4 = reinterpret_cast<const float4 *>(scale);
+  const float4 *bias_f4 = reinterpret_cast<const float4 *>(bias);
+
+  // optimize: use shared memory to reduce redundant memory load
+  extern __shared__ char s_raw_buffer[];
+  const size_t alignment = 128;
+  // helper function for alignment
+  auto align_up_device = [](size_t size, size_t align) {
+      return (size + align - 1) & ~(align - 1);
+  };
+
+  size_t size_inp_bytes = hidden_size * sizeof(float4);
+  size_t size_scale_bytes = hidden_size * sizeof(float4);
+  size_t size_bias_bytes = hidden_size * sizeof(float4);
+
+  size_t aligned_size_inp_bytes = align_up_device(size_inp_bytes, alignment);
+  size_t aligned_size_scale_bytes = align_up_device(size_scale_bytes, alignment);
+  size_t aligned_size_bias_bytes = align_up_device(size_bias_bytes, alignment);
+
+  // manually divide buffer
+  float4 *s_inp_f4 = reinterpret_cast<float4*>(s_raw_buffer);
+  float4 *s_scale_f4 = reinterpret_cast<float4*>(s_raw_buffer + aligned_size_inp_bytes);
+  float4 *s_bias_f4 = reinterpret_cast<float4*>(s_raw_buffer + aligned_size_inp_bytes + aligned_size_scale_bytes);
+  float* s_mean_rstd = reinterpret_cast<float*>(s_raw_buffer + aligned_size_inp_bytes + aligned_size_scale_bytes + aligned_size_bias_bytes);
+
+
+  // Load data from memory to shared
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
-    float4 val = inp_f4[idx];
+    s_inp_f4[idx] = inp_f4[idx];
+    s_scale_f4[idx] = scale_f4[idx];
+    s_bias_f4[idx] = bias_f4[idx];
+  }
+  __syncthreads();
+
+  for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
+    float4 val = s_inp_f4[idx];
     l_sum += val.x + val.y + val.z + val.w;
-    l_sum_1 += val.x * val.x + val.y * val.y + val.z * val.z + val.w * val.w;
+    l_sum_sq += val.x * val.x + val.y * val.y + val.z * val.z + val.w * val.w;
   }
 
   // Step 2
   float thread_local_data[2];
   thread_local_data[0] = l_sum;
-  thread_local_data[1] = l_sum_1;
+  thread_local_data[1] = l_sum_sq;
 
   blockReduce<ReduceType::kSum, 2>(thread_local_data);
-  __shared__ float final_mean, final_var;
 
   if (threadIdx.x == 0) {
     // Only threadIdx.x == 0 gets the final result
     float block_total_sum = thread_local_data[0];
     float block_total_sum_sq = thread_local_data[1];
     
-    final_mean = block_total_sum / (4 * hidden_size);
-    final_var = block_total_sum_sq / (4 * hidden_size) - final_mean * final_mean;
+    float final_mean = block_total_sum / (4 * hidden_size);
+    float final_var = block_total_sum_sq / (4 * hidden_size) - final_mean * final_mean;
 
     means[blockIdx.x] = final_mean;
     vars[blockIdx.x] = final_var;
+
+    s_mean_rstd[0] = final_mean;
+    s_mean_rstd[1] = rsqrt(final_var + LN_EPSILON);
   }
-
   __syncthreads();
-
-  float r_std = rsqrt(final_var);
 
   // Step 3
   float4 *ln_res_f4 = reinterpret_cast<float4 *>(ln_res) + blockIdx.x * hidden_size;
-  const float4 *scale_f4 = reinterpret_cast<const float4 *>(scale);
-  const float4 *bias_f4 = reinterpret_cast<const float4 *>(bias);
+  float final_mean = s_mean_rstd[0];
+  float r_std = s_mean_rstd[1];
+
   for (uint idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
     float4 res;
-    float4 val = inp_f4[idx];
-    float4 scale_val = scale_f4[idx];
-    float4 bias_val = bias_f4[idx];
+    float4 val = s_inp_f4[idx];
+    float4 scale_val = s_scale_f4[idx];
+    float4 bias_val = s_bias_f4[idx];
 
     res.x = scale_val.x * (val.x - final_mean) * r_std + bias_val.x;
     res.y = scale_val.y * (val.y - final_mean) * r_std + bias_val.y;
@@ -100,6 +134,11 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
 }
 
 extern "C" {
+// helper function, compute size after alignment
+size_t align_up(size_t size, size_t align_in_bytes) {
+    return (size + align_in_bytes - 1) & ~(align_in_bytes - 1);
+}
+
 void launch_layernorm(float *ln_res, float *vars, float *means,
                               const float *inp, const float *scale,
                               const float *bias, int batch_size, int hidden_dim,
@@ -128,13 +167,26 @@ void launch_layernorm(float *ln_res, float *vars, float *means,
   cudaMemcpy(d_scale, scale, scale_size, cudaMemcpyHostToDevice);
   cudaMemcpy(d_bias, bias, bias_size, cudaMemcpyHostToDevice);
 
+  // 1. compute shared memory size for a block
+  const size_t alignment = 128;    // use 128 bytes to align
+  size_t size_inp_bytes = hidden_dim * float_size;
+  size_t size_scale_bytes = hidden_dim * float_size;
+  size_t size_bias_bytes = hidden_dim * float_size;
+
+  // Use align_up to ensure safety
+  size_t aligned_size_inp_bytes = align_up(size_inp_bytes, alignment);
+  size_t aligned_size_scale_bytes = align_up(size_scale_bytes, alignment);
+
+  // 1 for inp, 1 for scale, 1 for bias, 2 for float
+  size_t total_shared_mem_bytes = aligned_size_inp_bytes + aligned_size_scale_bytes + size_bias_bytes + float_size * 2;
+
   // For using float4
   hidden_dim >>= 2;
   int nthread = min(((hidden_dim + 31) / 32) * 32, MAX_THREADS);
   dim3 grid_dim(batch_size);
   dim3 block_dim(nthread);
 
-  ker_layer_norm<float><<<grid_dim, block_dim, 0, stream>>>(
+  ker_layer_norm<float><<<grid_dim, block_dim, total_shared_mem_bytes, stream>>>(
       d_ln_res, d_vars, d_means, d_inp, d_scale, d_bias, hidden_dim);
 
   // Copy back to the host
