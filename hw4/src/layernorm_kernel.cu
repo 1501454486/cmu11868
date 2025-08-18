@@ -176,9 +176,10 @@ void launch_layernorm(float *ln_res, float *vars, float *means,
   // Use align_up to ensure safety
   size_t aligned_size_inp_bytes = align_up(size_inp_bytes, alignment);
   size_t aligned_size_scale_bytes = align_up(size_scale_bytes, alignment);
+  size_t aligned_size_bias_bytes = align_up(size_bias_bytes, alignment);
 
   // 1 for inp, 1 for scale, 1 for bias, 2 for float
-  size_t total_shared_mem_bytes = aligned_size_inp_bytes + aligned_size_scale_bytes + size_bias_bytes + float_size * 2;
+  size_t total_shared_mem_bytes = aligned_size_inp_bytes + aligned_size_scale_bytes + aligned_size_bias_bytes + float_size * 2;
 
   // For using float4
   hidden_dim >>= 2;
