@@ -463,13 +463,22 @@ void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,
   cudaMalloc((void **)&d_vars, vars_means_size);
   cudaMalloc((void **)&d_means, vars_means_size);
 
-  // Copy memory to device
-  cudaMemcpy((void *)d_out_grad, out_grad, grad_output_size, cudaMemcpyHostToDevice);
-  cudaMemcpy((void *)d_inp, inp, grad_output_size, cudaMemcpyHostToDevice);
-  cudaMemcpy((void *)d_gamma, gamma, gamma_betta_size, cudaMemcpyHostToDevice);
-  cudaMemcpy((void *)d_betta, betta, gamma_betta_size, cudaMemcpyHostToDevice);
-  cudaMemcpy((void *)d_vars, vars, vars_means_size, cudaMemcpyHostToDevice);
-  cudaMemcpy((void *)d_means, means, vars_means_size, cudaMemcpyHostToDevice);
+  // Create a CUDA Event to synchronize data copy
+  cudaEvent_t data_ready_event;
+  cudaEventCreate(&data_ready_event);
+
+  // Asynchronizely copy memory to device on stream 1
+  cudaMemcpyAsync((void *)d_out_grad, out_grad, grad_output_size, cudaMemcpyHostToDevice, stream_1);
+  cudaMemcpyAsync((void *)d_inp, inp, grad_output_size, cudaMemcpyHostToDevice, stream_1);
+  cudaMemcpyAsync((void *)d_gamma, gamma, gamma_betta_size, cudaMemcpyHostToDevice, stream_1);
+  cudaMemcpyAsync((void *)d_betta, betta, gamma_betta_size, cudaMemcpyHostToDevice, stream_1);
+  cudaMemcpyAsync((void *)d_vars, vars, vars_means_size, cudaMemcpyHostToDevice, stream_1);
+  cudaMemcpyAsync((void *)d_means, means, vars_means_size, cudaMemcpyHostToDevice, stream_1);
+
+  // record a flag in stream_1, indicating that all data needed has been copied.
+  cudaEventRecord(data_ready_event, stream_1);
+  // Wait for stream_1 to record the flag.
+  cudaStreamWaitEvent(stream_2, data_ready_event, 0);
 
   // Launch kernels
   // Compute grad of gamma and betta
@@ -478,8 +487,7 @@ void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,
   dim3 grid_dim((hidden_dim + TILE_DIM - 1) / TILE_DIM);
   dim3 block_dim(TILE_DIM, TILE_DIM);
   ker_ln_bw_dgamma_dbetta<float><<<grid_dim, block_dim, 0, stream_1>>>(
-      d_gamma_grad, d_betta_grad, d_out_grad, d_inp, d_gamma, d_betta, d_vars,
-      d_means, batch_size, hidden_dim);
+      d_gamma_grad, d_betta_grad, d_out_grad, d_inp, d_gamma, d_betta, d_vars, d_means, batch_size, hidden_dim);
 
   // Compute grad of input
   if (hidden_dim % 4 != 0 || hidden_dim > 4096) {
@@ -491,17 +499,20 @@ void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,
       d_inp_grad, d_out_grad, d_inp, d_gamma, d_betta, d_vars, d_means, hidden_dim);
 
   // Synchronize and check for errors
-  cudaDeviceSynchronize();
-  cudaError_t err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    fprintf(stderr, "launch_layernorm_bw Error: %s\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
+  // cudaDeviceSynchronize();
+  // cudaError_t err = cudaGetLastError();
+  // if (err != cudaSuccess) {
+  //   fprintf(stderr, "launch_layernorm_bw Error: %s\n", cudaGetErrorString(err));
+  //   exit(EXIT_FAILURE);
+  // }
 
+  // Asynchronize copy back
   // Copy back to host
-  cudaMemcpy(gamma_grad, d_gamma_grad, gamma_betta_size, cudaMemcpyDeviceToHost);
-  cudaMemcpy(betta_grad, d_betta_grad, gamma_betta_size, cudaMemcpyDeviceToHost);
-  cudaMemcpy(inp_grad, d_inp_grad, grad_output_size, cudaMemcpyDeviceToHost);
+  cudaMemcpyAsync(gamma_grad, d_gamma_grad, gamma_betta_size, cudaMemcpyDeviceToHost, stream_1);
+  cudaMemcpyAsync(betta_grad, d_betta_grad, gamma_betta_size, cudaMemcpyDeviceToHost, stream_1);
+  cudaMemcpyAsync(inp_grad, d_inp_grad, grad_output_size, cudaMemcpyDeviceToHost, stream_2);
+
+  cudaEventDestroy(data_ready_event);
 
   // Free device memory
   cudaFree(d_gamma_grad);

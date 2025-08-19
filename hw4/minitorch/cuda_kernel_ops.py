@@ -485,8 +485,8 @@ class CudaKernelOps(TensorOps):
       beta_grad = inp.zeros(beta.shape)
       inp_grad = inp.zeros(inp.shape)
       
-      stream_1 = torch.cuda.current_stream().cuda_stream
-      stream_2 = torch.cuda.current_stream().cuda_stream
+      stream_1 = torch.cuda.current_stream()
+      stream_2 = torch.cuda.Stream()
       
       lib_layernorm.launch_layernorm_bw.argtypes = [
           np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
@@ -517,9 +517,12 @@ class CudaKernelOps(TensorOps):
           mean._tensor._storage,
           batch_size,
           hidden_dim,
-          stream_1,
-          stream_2
+          stream_1.cuda_stream,
+          stream_2.cuda_stream
       )
+      
+      stream_1.synchronize()
+      stream_2.synchronize()
 
       return inp_grad, gamma_grad, beta_grad
       #   END ASSIGN4_2_2
