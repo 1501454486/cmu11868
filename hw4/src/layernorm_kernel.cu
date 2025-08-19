@@ -368,6 +368,7 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   // Step 1
   // NOTE: need to calculate shift!
   int original_hidden_dim = hidden_dim * 4;
+  const int MAX_DIM = 1024;
   const T* inp_row = inp + blockIdx.x * original_hidden_dim;
   const T* out_grad_row = out_grad + blockIdx.x * original_hidden_dim;
   const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp_row);
@@ -378,6 +379,9 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   float var_val = vars[blockIdx.x];
   float mean_val = means[blockIdx.x];
   float rsqrt_var = rsqrt(var_val + LN_EPSILON);
+
+  __shared__ float4 s_dxhat[MAX_DIM];
+  __shared__ float4 s_xhat[MAX_DIM];
 
   float dxhat_sum = 0;
   float dxhat_xhat_sum = 0;
@@ -393,12 +397,14 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
     dxhat.y = dout_val.y * gamma_val.y;
     dxhat.z = dout_val.z * gamma_val.z;
     dxhat.w = dout_val.w * gamma_val.w;
+    s_dxhat[idx] = dxhat;
 
     float4 xhat;
     xhat.x = (inp_val.x - mean_val) * rsqrt_var;
     xhat.y = (inp_val.y - mean_val) * rsqrt_var;
     xhat.z = (inp_val.z - mean_val) * rsqrt_var;
     xhat.w = (inp_val.w - mean_val) * rsqrt_var;
+    s_xhat[idx] = xhat;
 
     dxhat_sum += dxhat.x + dxhat.y + dxhat.z + dxhat.w;
     dxhat_xhat_sum += dxhat.x * xhat.x + dxhat.y * xhat.y + dxhat.z * xhat.z + dxhat.w * xhat.w;
@@ -420,22 +426,8 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
  
   // Step 4
   for (int idx = threadIdx.x; idx < hidden_dim; idx += blockDim.x) {
-    float4 inp_val = inp_f4[idx];
-    float4 dout_val = dout_f4[idx];
-    float4 gamma_val = gamma_f4[idx];
-    float4 beta_val = beta_f4[idx];
-
-    float4 dxhat;
-    dxhat.x = dout_val.x * gamma_val.x;
-    dxhat.y = dout_val.y * gamma_val.y;
-    dxhat.z = dout_val.z * gamma_val.z;
-    dxhat.w = dout_val.w * gamma_val.w;
-
-    float4 xhat;
-    xhat.x = (inp_val.x - mean_val) * rsqrt_var;
-    xhat.y = (inp_val.y - mean_val) * rsqrt_var;
-    xhat.z = (inp_val.z - mean_val) * rsqrt_var;
-    xhat.w = (inp_val.w - mean_val) * rsqrt_var;
+    float4 dxhat = s_dxhat[idx];
+    float4 xhat = s_xhat[idx];
 
     float4 dinp_val;
     dinp_val.x = (dxhat.x - (total_sums[0] + xhat.x * total_sums[1]) / original_hidden_dim) * rsqrt_var;
