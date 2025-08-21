@@ -1,7 +1,8 @@
-from re import S
 import numpy as np
 from .tensor import tensor, tensor_from_numpy
 from .module import Module, Parameter
+from .tensor_functions import Attn_Softmax
+from .tensor_functions import LayerNorm
 from .modules_basic import (
     Embedding,
     Dropout,
@@ -22,7 +23,7 @@ datatype = np.float32
 
 
 class MultiHeadAttention(Module):
-    def __init__(self, n_embd: int, n_head: int, causal: bool=True, p_dropout: float=0.1, bias: bool=True, backend: TensorBackend=None):
+    def __init__(self, n_embd: int, n_head: int, causal: bool=True, p_dropout: float=0.1, bias: bool=True, backend: TensorBackend=None, use_fused_kernel: bool=False):
         super().__init__()
         """Implements Multi-Head Attention as described in "Attention Is All You Need"
 
@@ -52,6 +53,7 @@ class MultiHeadAttention(Module):
         self.v_projection = Linear(n_embd, n_embd, bias = bias, backend = backend)
         self.out_projection = Linear(n_embd, n_embd, bias = bias, backend = backend)
         self.dropout = Dropout(p_dropout = p_dropout)
+        self.use_fused_kernel = use_fused_kernel
         ### END ASSIGN3_3
 
     def create_causal_mask(self, seq_len):
@@ -123,12 +125,19 @@ class MultiHeadAttention(Module):
         
         ### BEGIN ASSIGN3_3
         attn_scores = q @ kT / (self.attn_hidden_dim ** 0.5)
-        if self.causal:
-            # if need mask
-            mask = self.create_causal_mask(queries_len)
-            attn_scores = attn_scores + mask
-            
-        attn_weights = softmax(attn_scores, dim = 3)
+        
+        if not self.use_fused_kernel:
+            if self.causal:
+                # if need mask
+                mask = self.create_causal_mask(queries_len)
+                attn_scores = attn_scores + mask
+            attn_weights = softmax(attn_scores, dim = 3)
+        else:
+            if self.causal:
+                mask = self.create_causal_mask(queries_len)
+            else:
+                mask = attn_scores.zeros(attn_scores.shape)
+            attn_weights = Attn_Softmax.apply(attn_scores, mask)
         
         attn_weights = self.dropout(attn_weights)
         
@@ -210,7 +219,7 @@ class FeedForward(Module):
     
 
 class TransformerLayer(Module):
-    def __init__(self, n_embd: int, n_head: int, p_dropout: float=0.1, ln_eps: float=1e-5, bias: bool=True, backend: TensorBackend=None):
+    def __init__(self, n_embd: int, n_head: int, p_dropout: float=0.1, ln_eps: float=1e-5, bias: bool=True, backend: TensorBackend=None, use_fused_kernel: bool=False):
         super().__init__()
         """
         Initialize a transformer layer with pre-layer normalization.
@@ -230,9 +239,9 @@ class TransformerLayer(Module):
             ff (FeedForward): Feed-forward network layer
         """
         ### BEGIN ASSIGN3_3
-        self.ln_1 = LayerNorm1d(n_embd, eps = ln_eps, backend = backend)
-        self.ln_2 = LayerNorm1d(n_embd, eps = ln_eps, backend = backend)
-        self.attention = MultiHeadAttention(n_embd, n_head, p_dropout = p_dropout, bias = bias, backend = backend)
+        self.ln_1 = LayerNorm1d(n_embd, eps = ln_eps, backend = backend, use_fused_kernel=use_fused_kernel)
+        self.ln_2 = LayerNorm1d(n_embd, eps = ln_eps, backend = backend, use_fused_kernel=use_fused_kernel)
+        self.attention = MultiHeadAttention(n_embd, n_head, p_dropout = p_dropout, bias = bias, backend = backend, use_fused_kernel=use_fused_kernel)
         self.ff = FeedForward(n_embd, p_dropout = p_dropout, bias = bias, backend = backend)
         ### END ASSIGN3_3
 
@@ -269,7 +278,8 @@ class DecoderLM(Module):
         p_dropout: float=0.1,
         ln_eps: float=1e-5, 
         bias: bool=True,
-        backend: TensorBackend=None
+        backend: TensorBackend=None,
+        use_fused_kernel: bool=False
     ):
         super().__init__()
         """
@@ -316,7 +326,8 @@ class DecoderLM(Module):
             p_dropout = p_dropout,
             ln_eps = ln_eps,
             bias = bias,
-            backend = backend
+            backend = backend,
+            use_fused_kernel=use_fused_kernel
         )
         self.t_layer_2 = TransformerLayer(
             n_embd = n_embd,
@@ -324,7 +335,8 @@ class DecoderLM(Module):
             p_dropout = p_dropout,
             ln_eps = ln_eps,
             bias = bias,
-            backend = backend
+            backend = backend,
+            use_fused_kernel=use_fused_kernel
         )
         self.t_layer_3 = TransformerLayer(
             n_embd = n_embd,
@@ -332,7 +344,8 @@ class DecoderLM(Module):
             p_dropout = p_dropout,
             ln_eps = ln_eps,
             bias = bias,
-            backend = backend
+            backend = backend,
+            use_fused_kernel=use_fused_kernel
         )
         self.t_layer_4 = TransformerLayer(
             n_embd = n_embd,
@@ -340,13 +353,15 @@ class DecoderLM(Module):
             p_dropout = p_dropout,
             ln_eps = ln_eps,
             bias = bias,
-            backend = backend
+            backend = backend,
+            use_fused_kernel=use_fused_kernel
         )
         self.dropout = Dropout(p_dropout = p_dropout)
         self.ln = LayerNorm1d(
             dim = n_embd,
             eps = ln_eps,
-            backend = backend
+            backend = backend,
+            use_fused_kernel=use_fused_kernel
         )
         self.lm_head = Linear(
             in_size = n_embd,

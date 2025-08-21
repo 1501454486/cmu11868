@@ -560,7 +560,8 @@ def main(
     n_embd=256,
     seed=11111,
     resume=True,
-    checkpoint_path="/home/lixinyuan/cmu11868hw/hw3/workdir_vocab10000_lr0.02_embd256/checkpoint_latest.pkl"
+    checkpoint_path="/home/lixinyuan/cmu11868hw/hw3/workdir_vocab10000_lr0.02_embd256/checkpoint_latest.pkl",
+    use_fused_kernel=False
 ):
     """
     Train and evaluate a decoder-only transformer language model.
@@ -595,7 +596,8 @@ def main(
         # 'n_layer'     : 4,    # n_layer
         'p_dropout': 0.1,  # x_pdrop
         'ln_eps': 1e-5,  # layer_norm_epsilon
-        'backend': backend
+        'backend': backend,
+        'use_fused_kernel': use_fused_kernel
     }
 
     model = DecoderLM(**config)

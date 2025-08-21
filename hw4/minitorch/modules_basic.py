@@ -8,7 +8,7 @@ Embedding
 import numpy as np
 
 from .module import Module, Parameter
-from .tensor_functions import (zeros, ones, rand, tensor, tensor_from_numpy, zeros_tensor_from_numpy, ones_tensor_from_numpy)
+from .tensor_functions import (zeros, ones, rand, tensor, tensor_from_numpy, zeros_tensor_from_numpy, ones_tensor_from_numpy, LayerNorm)
 from .nn import one_hot
 from .tensor_ops import TensorBackend
 from .tensor import Tensor
@@ -130,7 +130,7 @@ class Linear(Module):
 
 
 class LayerNorm1d(Module):
-    def __init__(self, dim: int, eps: float, backend: TensorBackend):
+    def __init__(self, dim: int, eps: float, backend: TensorBackend, use_fused_kernel: bool=False):
         super().__init__()
         """Applies Layer Normalization over a mini-batch of 1-dimensional inputs.
         
@@ -162,7 +162,10 @@ class LayerNorm1d(Module):
         """
         batch, dim = x.shape
         ### BEGIN ASSIGN3_2
-        norm_x = (x - x.mean(dim = 1)) / ((x.var(dim = 1) + self.eps) ** 0.5)
-        output = norm_x * self.weights.value + self.bias.value
+        if not self.use_fused_kernel:
+            norm_x = (x - x.mean(dim = 1)) / ((x.var(dim = 1) + self.eps) ** 0.5)
+            output = norm_x * self.weights.value + self.bias.value
+        else:
+            output = LayerNorm.apply(x, self.weights, self.bias)
         return output
         ### END ASSIGN3_2
