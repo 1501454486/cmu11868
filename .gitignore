@@ -25,4 +25,4 @@ cuda_kernels/
 
 *.pt
 
-*.png
+# *.png
