@@ -5,6 +5,9 @@ import torch.distributed as dist
 
 
 class Partition():
+    """
+    Used to define a dataset class to return the data according to partitioned indices
+    """
     def __init__(self, data, index):
         self.data = data
         self.index = index
@@ -15,10 +18,13 @@ class Partition():
     def __getitem__(self, index):
         '''Given index, get the data according to the partitioned index'''
         # BEGIN ASSIGN5_1_1
-        raise NotImplementedError("Data Parallel Not Implemented Yet")
+        return self.data[self.index[index]]
         # END ASSIGN5_1_1
 
 class DataPartitioner():
+    """
+    Used to partition any datasets according to different workload defined as `sizes`
+    """
     def __init__(self, data, sizes=[0.7, 0.2, 0.1], seed=1234):
         self.data = data
         self.partitions = []
@@ -29,7 +35,15 @@ class DataPartitioner():
         2. Create different partitions of indices according to `sizes` and store in `self.partitions`
         '''
         # BEGIN ASSIGN5_1_1
-        raise NotImplementedError("Data Parallel Not Implemented Yet")
+        data_size = len(data)
+        indices = list(range(data_size))
+        rng.shuffle(indices)
+        pointer = 0
+        for size in sizes:
+            count = int(data_size * size)
+            partition_indices = indices[pointer : pointer + count]
+            self.partitions.append(partition_indices)
+            pointer += count
         # END ASSIGN5_1_1
 
     def use(self, partition):
@@ -38,7 +52,8 @@ class DataPartitioner():
         Just one line of code. Think it simply.
         '''
         # BEGIN ASSIGN5_1_1
-        raise NotImplementedError("Data Parallel Not Implemented Yet")
+        index = self.partitions[partition]
+        return Partition(self.data, index)
         # END ASSIGN5_1_1
 
 def partition_dataset(rank, world_size, dataset, batch_size=128, collate_fn=None):
@@ -54,5 +69,12 @@ def partition_dataset(rank, world_size, dataset, batch_size=128, collate_fn=None
     4. Wrap the dataset with `DataLoader`, remember to customize the `collate_fn`
     """
     # BEGIN ASSIGN5_1
-    raise NotImplementedError("Data Parallel Not Implemented Yet")
+    partition = [1 / world_size] * world_size
+    data_partitioner = DataPartitioner(dataset, sizes = partition)
+    partitioned_dataset = data_partitioner.use(rank)
+    return DataLoader(
+        dataset = partitioned_dataset,
+        batch_size = batch_size,
+        collate_fn = collate_fn
+    )
     # END ASSIGN5_1
