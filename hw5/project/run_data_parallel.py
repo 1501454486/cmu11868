@@ -32,7 +32,14 @@ def average_gradients(model):
     3. Average the gradients over the world_size (total number of devices)
     '''
     # BEGIN ASSIGN5_1_2
-    raise NotImplementedError("Data Parallel Not Implemented Yet")
+    # Get world size
+    world_size = dist.get_world_size()
+    # traverse over all parameters:
+    for param in model.parameters():
+        if param.grad is not None:
+            # Sum all grad tensor
+            dist.all_reduce(param.grad, op = dist.ReduceOp.SUM)
+            param.grad /= world_size
     # END ASSIGN5_1_2
 
 def setup(rank, world_size, backend):
@@ -42,7 +49,15 @@ def setup(rank, world_size, backend):
     2. Use `torch.distributed` to init the process group
     '''
     # BEGIN ASSIGN5_1_2
-    raise NotImplementedError("Data Parallel Not Implemented Yet")
+    # 1. set environment variables
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '11868'
+    # init process group
+    dist.init_process_group(
+        backend = backend,
+        world_size = world_size,
+        rank = rank
+    )
     # END ASSIGN5_1_2
 
 
@@ -188,8 +203,31 @@ if __name__ == '__main__':
     2. You should start the processes to work and terminate resources properly
     '''
     # BEGIN ASSIGN5_1_3
-    world_size = None  # TODO: Define the number of GPUs
-    backend = None  # TODO: Define your backend for communication, we suggest using 'nccl'
+    world_size = args.world_size  # TODO: Define the number of GPUs
+    backend = 'nccl'  # TODO: Define your backend for communication, we suggest using 'nccl'
+
+    # Create processes
+    for p_id in range(world_size):
+        proc = Process(
+            target = run_dp,
+            args = (
+                p_id,
+                args.world_size,
+                backend,
+                args.dataset,
+                args.model_max_length,
+                args.n_epochs,
+                args.batch_size,
+                args.learning_rate
+            )
+        )
+        processes.append(proc)
+        
+    # Start processes
+    for proc in processes:
+        proc.start()
     
-    raise NotImplementedError("Data Parallel Not Implemented Yet")
+    # Wait for proc to finish
+    for proc in processes:
+        proc.join()
     # END ASSIGN5_1_3
