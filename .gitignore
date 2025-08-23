@@ -22,3 +22,7 @@ CLAUDE.md
 data
 
 cuda_kernels/
+
+*.pt
+
+*.png

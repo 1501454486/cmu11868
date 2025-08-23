@@ -136,7 +136,9 @@ class PowerScalar(Function):
                 Tensor containing the result of raising every element of a to scalar.
         """
         # COPY FROM ASSIGN3
-        raise NotImplementedError
+        out = a.f.pow_scalar_zip(a, scalar)
+        ctx.save_for_backward(a, scalar)
+        return out
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, float]:
@@ -161,7 +163,7 @@ class PowerScalar(Function):
         grad_a    = None
         
         # COPY FROM ASSIGN3
-        raise NotImplementedError
+        grad_a = grad_output * (scalar * (a ** (scalar - 1)))
 
         return (grad_a, 0.0)
 
@@ -185,7 +187,9 @@ class Tanh(Function):
                 Tensor containing the element-wise tanh of a.
         """
         # COPY FROM ASSIGN3
-        raise NotImplementedError
+        out = a.f.tanh_map(a)
+        ctx.save_for_backward(out)
+        return out
     
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tensor:
@@ -204,7 +208,8 @@ class Tanh(Function):
                 gradient_for_a must be the correct element-wise gradient for tanh.
         """
         # COPY FROM ASSIGN3
-        raise NotImplementedError
+        out = ctx.saved_values[0]
+        return grad_output * (-(out ** 2) + 1)
 
 
 class Sigmoid(Function):
@@ -388,9 +393,12 @@ class Attn_Softmax(Function):
       #   END ASSIGN4_1_1
 
     @staticmethod
-    def backward(ctx: Context, out_grad: Tensor) -> Tensor:
+    def backward(ctx: Context, out_grad: Tensor) -> Tuple[Tensor, Tensor]:
       #   BEGIN ASSIGN4_1_2
-      raise NotImplementedError("Need to implement for Assignment 3")
+      soft_inp, mask = ctx.saved_values[0], ctx.saved_values[1]
+      grad_inp = soft_inp.f.attn_softmax_bw(out_grad, soft_inp)
+      grad_mask = zeros(mask.shape, mask.backend)
+      return grad_inp, grad_mask
       #   END ASSIGN4_1_2
 
 
@@ -398,13 +406,16 @@ class LayerNorm(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, gamma: Tensor, beta: Tensor) -> Tensor:
       #   BEGIN ASSIGN4_2_1
-      raise NotImplementedError("Need to implement for Assignment 3")
+      ln_res, vars, means = inp.f.layernorm_fw(inp, gamma, beta)
+      ctx.save_for_backward(inp, gamma, beta, vars, means)
+      return ln_res
       #   END ASSIGN4_2_1
 
     @staticmethod
-    def backward(ctx: Context, out_grad: Tensor) -> Tensor:
+    def backward(ctx: Context, out_grad: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
       #   BEGIN ASSIGN4_2_2
-      raise NotImplementedError("Need to implement for Assignment 3")
+      inp, gamma, beta, vars, means = ctx.saved_values[0], ctx.saved_values[1], ctx.saved_values[2], ctx.saved_values[3], ctx.saved_values[4]
+      return inp.f.layernorm_bw(out_grad, inp, gamma, beta, vars, means)
       #   END ASSIGN4_2_2
 
 

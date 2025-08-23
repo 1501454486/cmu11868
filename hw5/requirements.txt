@@ -1,0 +1,6 @@
+torch==2.2.0
+matplotlib==3.8.3
+datasets==2.4.0
+embeddings==0.0.8
+transformers==4.37.2
+sacrebleu==2.4.0
