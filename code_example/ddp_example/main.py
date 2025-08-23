@@ -1,8 +1,6 @@
 import argparse
-from pkgutil import get_data
 import time
 import math
-import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
