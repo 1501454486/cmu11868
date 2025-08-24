@@ -1,5 +1,6 @@
 from typing import Any, Iterable, Iterator, List, Optional, Union, Sequence, Tuple, cast
 
+from matplotlib.bezier import split_bezier_intersecting_with_closedpath
 import torch
 from torch import Tensor, nn
 import torch.autograd
@@ -65,7 +66,14 @@ class Pipe(nn.Module):
         Please note that you should put the result on the last device. Putting the result on the same device as input x will lead to pipeline parallel training failing.
         '''
         # BEGIN ASSIGN5_2_2
-        raise NotImplementedError("Pipeline Parallel Not Implemented Yet")
+        # Split input using self.split_size
+        batches = list(torch.split(x, self.split_size, dim = 0))
+        num_batches = len(batches)
+        for schedule in _clock_cycles(num_batches, len(self.devices)):
+            self.compute(batches, schedule)
+        # NOTE: keep results in the same device(last)!
+        result = torch.cat([b.to(self.devices[-1]) for b in batches], dim = 0)
+        return result
         # END ASSIGN5_2_2
 
     def compute(self, batches, schedule: List[Tuple[int, int]]) -> None:
@@ -81,6 +89,27 @@ class Pipe(nn.Module):
         devices = self.devices
 
         # BEGIN ASSIGN5_2_2
-        raise NotImplementedError("Pipeline Parallel Not Implemented Yet")
+        # traverse schedule
+        for microbatch_idx, partition_idx in schedule:
+            input_tensor = batches[microbatch_idx]
+            partition = partitions[partition_idx]
+            device = devices[partition_idx]
+            
+            # use lambda function to define compute function
+            compute_func = lambda data=input_tensor, model=partition, dev=device: model(data.to(dev))
+            # Create task
+            task = Task(compute = compute_func)
+            # Submit task to corresponding (partition_idx) partition in_queue
+            self.in_queues[partition_idx].put(task)
+
+        # traverse again, and put results back to batches
+        for microbatch_idx, partition_idx in schedule:
+            success, payload = self.out_queues[partition_idx].get()
+            if success is True:
+                task, batch_output = payload
+                batches[microbatch_idx] = batch_output
+            else:
+                exc_info = payload
+                raise exc_info[1].with_traceback(exc_info[2])
         # END ASSIGN5_2_2
 
