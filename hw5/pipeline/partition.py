@@ -1,3 +1,4 @@
+from ast import With
 from typing import Any, Iterable, Iterator, List, Optional, Union, Sequence, Tuple, cast
 import torch
 from torch import nn
@@ -58,12 +59,28 @@ def _split_module(modules: nn.Sequential) -> Tuple[List[nn.Sequential], List[tor
     current_device = None
     for name, module in modules.named_children():
         # BEGIN ASSIGN5_2_1
-        raise NotImplementedError("Module Splitting Not Implemented Yet")
+        # For the first one
+        if isinstance(module, WithDevice):
+            current_device = module._device
+        else:
+            current_device = _retrieve_device(module)
+        if len(current_partition) == 0:
+            current_partition.append(module)
+            devices.append(current_device)
+        else:
+            last_device = devices[-1]
+            # if device of this module is the same as the last one
+            # append it to last partition
+            if current_device == last_device:
+                current_partition.append(module)
+            else:
+                partitions.append(_assemble_partition(current_partition))
+                current_partition = [module]
+                devices.append(current_device)
         # END ASSIGN5_2_1
 
     if current_device is not None:
         partitions.append(_assemble_partition(current_partition))
-        devices.append(current_device)
 
     partitions = nn.ModuleList(partitions)
 
