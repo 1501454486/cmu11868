@@ -85,10 +85,25 @@ if __name__ == '__main__':
         fig_name = f'{output_dir}/throughput_comparison.png',
         y_label = 'GPT2 Throughput (Tokens per Second)'
     )
+    
 
-    # pp_mean, pp_std = None, None
-    # mp_mean, mp_std = None, None
-    # plot([pp_mean, mp_mean],
-    #     [pp_std, mp_std],
-    #     ['Pipeline Parallel', 'Model Parallel'],
-    #     f'{output_dir}/pp_vs_mp.png')
+    mp_time_mean, mp_time_std = 39.8867, 0.2852
+    mp_tp_mean, mp_tp_std = 16046.3, 113.5
+    pp_time_mean, pp_time_std = 33.9733, 0.5037
+    pp_tp_mean, pp_tp_std = 18842.4, 274.06
+
+    plot(
+        means = [pp_time_mean, mp_time_mean],
+        stds = [pp_time_std, mp_time_std],
+        labels = ['Pipeline Parallel', 'Model Parallel'],
+        fig_name = f'{output_dir}/pp_vs_mp_time.png',
+        y_label = 'GPT2 Execution Time (second)'
+    )
+    
+    plot(
+        means = [pp_tp_mean, mp_tp_mean],
+        stds = [pp_tp_std, mp_tp_std],
+        labels = ['Pipeline Parallel', 'Model Parallel'],
+        fig_name = f'{output_dir}/pp_vs_mp_throughput.png',
+        y_label = 'GPT2 Throughput (tokens per second)'
+    )
