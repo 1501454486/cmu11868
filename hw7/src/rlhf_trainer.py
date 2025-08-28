@@ -438,7 +438,11 @@ class VERLTrainer:
         # 1. Compute returns = rewards + gamma * values (assume next state value = current value)
         # 2. Compute advantages = returns - values
         # 3. Normalize advantages: (advantages - mean) / (std + 1e-8)
-        raise NotImplementedError("Need to implement GAE computation for Assignment 7")
+        returns = rewards + self.ppo_config['gamma'] * values
+        advantages = returns - values
+        mean = advantages.mean()
+        std = advantages.std()
+        advantages = (advantages - mean) / (std + 1e-8)
         
         # END ASSIGN7_2_1
         
